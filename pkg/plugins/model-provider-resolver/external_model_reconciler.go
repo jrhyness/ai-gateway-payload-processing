@@ -59,6 +59,17 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	// RHOAIENG-99761: AGC-managed shapes (gatewayRefs or cross-namespace
+	// provider references) are served by ai-gateway-controller. Stop serving
+	// any previously cached mapping (a legacy object edited to the new shape)
+	// and never add AGC-managed models to the store; a same-named AGC-managed
+	// model must not displace a tenant model's mapping.
+	if ctrlcommon.IsAGCManaged(model) {
+		r.store.deleteModel(req.NamespacedName)
+		logger.Info("AGC-managed ExternalModel excluded from store", "name", req.Name, "namespace", req.Namespace)
+		return ctrl.Result{}, nil
+	}
+
 	modelName := model.Spec.ModelName
 	if modelName == "" {
 		modelName = req.Name
@@ -66,14 +77,10 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Resolve all refs whose providers are available in the store.
 	var resolved []*resolvedProviderRef
-	unsupportedNamespace := false
 	for i := range model.Spec.ExternalProviderRefs {
 		ref := &model.Spec.ExternalProviderRefs[i]
 		resolvedRef, err := r.resolveRef(req.Namespace, ref)
 		if err != nil {
-			if ref.Ref.Namespace != "" && ref.Ref.Namespace != req.Namespace {
-				unsupportedNamespace = true
-			}
 			logger.Error(err, "failed to resolve ref, skipping", "provider", model.Spec.ExternalProviderRefs[i].Ref.Name)
 			continue
 		}
@@ -81,11 +88,6 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if len(resolved) == 0 {
-		if unsupportedNamespace {
-			// Stop serving a previously cached local provider after an update to
-			// an unsupported foreign namespace.
-			r.store.deleteModel(req.NamespacedName)
-		}
 		logger.Info("no ExternalProvider available for any ref, requeuing")
 		return ctrl.Result{RequeueAfter: providerRequeueDelay}, nil
 	}
@@ -96,10 +98,9 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // resolveRef resolves a single ExternalProviderRef to provider info.
+// AGC-managed models are excluded before this runs (RHOAIENG-99761), so every
+// ref resolves in the model namespace.
 func (r *externalModelReconciler) resolveRef(namespace string, ref *inferencev1alpha1.ExternalProviderRef) (*resolvedProviderRef, error) {
-	if ref.Ref.Namespace != "" && ref.Ref.Namespace != namespace {
-		return nil, fmt.Errorf("cross-namespace ExternalProvider reference %q is not supported", ref.Ref.Namespace+"/"+ref.Ref.Name)
-	}
 	providerKey := types.NamespacedName{Namespace: namespace, Name: ref.Ref.Name}
 	providerInfo, found := r.store.getProvider(providerKey)
 	if !found {

@@ -242,10 +242,16 @@ func TestReconcile_ProviderNamespace(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, model))
 			var route gatewayapiv1.HTTPRoute
 			if scope == "foreign" {
-				waitForModelPhase(t, model.Name, ns, "Failed")
+				// AGC-managed shape (RHOAIENG-99761): skipped entirely — no
+				// status, no route.
+				require.Never(t, func() bool {
+					m := &inferencev1alpha1.ExternalModel{}
+					if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
+						return false
+					}
+					return m.Status.Phase != ""
+				}, 2*time.Second, 100*time.Millisecond, "IPP must not write status for AGC-managed models")
 				assert.True(t, apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)))
-				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
-				assert.Contains(t, model.Status.Conditions[0].Message, "cross-namespace ExternalProvider reference")
 			} else {
 				waitForModelPhase(t, model.Name, ns, "Ready")
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route))
@@ -275,20 +281,98 @@ func TestReconcile_ProviderNamespaceUpdate(t *testing.T) {
 				provider.Status.Phase = "Failed"
 				require.NoError(t, k8sClient.Status().Update(ctx, provider))
 			}
-			waitForModelPhase(t, model.Name, ns, "Failed")
 
 			var route gatewayapiv1.HTTPRoute
-			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
 			if change == "foreign reference" {
-				assert.True(t, apierrors.IsNotFound(err), "explicit unsupported reference must withdraw the route")
-				assert.Empty(t, model.Status.HTTPRouteName)
+				// AGC-managed edit (RHOAIENG-99761): IPP withdraws its route and
+				// stops writing status; the last-written status stays for AGC.
+				require.Eventually(t, func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
+					return apierrors.IsNotFound(err)
+				}, 10*time.Second, 100*time.Millisecond, "AGC-managed edit must withdraw the IPP-owned route")
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+				assert.Equal(t, "Ready", model.Status.Phase, "IPP must not rewrite status after the AGC-managed edit")
+				assert.Equal(t, model.Name, model.Status.HTTPRouteName)
 			} else {
+				waitForModelPhase(t, model.Name, ns, "Failed")
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
 				require.NoError(t, err, "transient readiness failure must keep the last-known-good route")
 				assert.Equal(t, model.Name, model.Status.HTTPRouteName)
 			}
 		})
 	}
+}
+
+func TestReconcile_AGCManagedGatewayRefs(t *testing.T) {
+	ns := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	model := newExternalModel("agc-model", ns, "provider", "gpt")
+	model.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "tenant-gateway", Namespace: "gateway-ns"},
+	}
+	require.NoError(t, k8sClient.Create(ctx, model))
+
+	// AGC-managed shape (RHOAIENG-99761): skipped entirely — no status, no
+	// route on the default gateway.
+	require.Never(t, func() bool {
+		m := &inferencev1alpha1.ExternalModel{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
+			return false
+		}
+		return m.Status.Phase != ""
+	}, 2*time.Second, 100*time.Millisecond, "IPP must not write status for AGC-managed models")
+	assert.True(t, apierrors.IsNotFound(
+		k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})))
+}
+
+func TestReconcile_AGCManagedTransition(t *testing.T) {
+	ns := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	// Start legacy-shaped: reconciled normally.
+	model := newExternalModel("transition", ns, "provider", "gpt")
+	require.NoError(t, k8sClient.Create(ctx, model))
+	waitForModelPhase(t, "transition", ns, "Ready")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{}))
+
+	// Edit to the AGC-managed shape: IPP must withdraw its own route...
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old := model.DeepCopy()
+	model.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "tenant-gateway", Namespace: "gateway-ns"},
+	}
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+	require.Eventually(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond, "AGC-managed edit must withdraw the IPP-owned route")
+
+	// ...but never touch a route it does not own. Simulate AGC (or a user)
+	// re-creating the same-named route after the withdrawal.
+	foreignRoute := &gatewayapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "transition",
+			Namespace: ns,
+			Labels:    map[string]string{ctrlcommon.LabelManagedBy: "ai-gateway-controller"},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, foreignRoute))
+
+	// Trigger another reconcile of the AGC-managed model.
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old = model.DeepCopy()
+	model.Annotations = map[string]string{"inference.opendatahub.io/probe": "reconcile"}
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+
+	// The foreign-owned route must survive and the status stay untouched.
+	assert.Never(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})
+		return err != nil
+	}, 2*time.Second, 100*time.Millisecond, "IPP must not delete an HTTPRoute it does not own")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	assert.Equal(t, "Ready", model.Status.Phase, "IPP must not rewrite status after the AGC-managed edit")
 }
 
 func TestReconcile_MissingProvider(t *testing.T) {
