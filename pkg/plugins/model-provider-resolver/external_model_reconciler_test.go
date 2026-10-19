@@ -493,7 +493,7 @@ func TestModelReconciler_ProviderNamespaceUpdate(t *testing.T) {
 			_, found := store.getModelByName(key.Name)
 			if change == "foreign reference" {
 				// AGC-managed edit (RHOAIENG-99761): stop serving the cached
-				// local provider without requeueing.
+				// local provider without requeuing.
 				assert.False(t, found, "AGC-managed edit must stop serving the cached local provider")
 				assert.Equal(t, ctrl.Result{}, result, "AGC-managed models must not requeue")
 			} else {

@@ -34,7 +34,6 @@ import (
 // providerController returns a setup function that registers the ExternalProvider
 // controller. It creates Service, ServiceEntry, and DestinationRule resources.
 // ExternalModel changes re-evaluate whether IPP may write provider status
-// (RHOAIENG-99761).
 func providerController() func(client.Client, *ctrlbuilder.Builder) error {
 	return func(c client.Client, b *ctrlbuilder.Builder) error {
 		utilruntime.Must(inferencev1alpha1.AddToScheme(c.Scheme()))

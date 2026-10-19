@@ -255,7 +255,7 @@ func TestReconcile_UpdateEndpoint(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-// --- AGC-managed reference status suppression (RHOAIENG-99761) ---
+// --- AGC-managed reference status suppression ---
 
 func newReferencingModel(name, namespace, providerName, providerNamespace string) *inferencev1alpha1.ExternalModel {
 	return &inferencev1alpha1.ExternalModel{

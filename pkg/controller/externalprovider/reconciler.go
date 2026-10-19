@@ -81,7 +81,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	// RHOAIENG-99761: when only AGC-managed ExternalModels reference this
+	// When only AGC-managed ExternalModels reference this
 	// provider, its status belongs to AGC. Transport resources are still
 	// reconciled, but status writes are suppressed so IPP cannot fight AGC's
 	// status on the same object. Providers referenced by at least one
@@ -170,7 +170,7 @@ func modelReferencesProvider(model *inferencev1alpha1.ExternalModel, provider *i
 
 // MapModelToProviders returns reconcile requests for the ExternalProviders
 // referenced by the changed ExternalModel. The reference set determines
-// whether IPP may write provider status (RHOAIENG-99761), so model changes
+// whether IPP may write provider status, so model changes
 // must re-evaluate the referenced providers.
 func (r *Reconciler) MapModelToProviders(ctx context.Context, obj client.Object) []reconcile.Request {
 	model := obj.(*inferencev1alpha1.ExternalModel)

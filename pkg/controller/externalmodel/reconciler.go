@@ -99,10 +99,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	// RHOAIENG-99761: AGC-managed shapes (gatewayRefs or cross-namespace
-	// provider references) are owned by ai-gateway-controller. Withdraw any
-	// HTTPRoute this controller still owns from a previous legacy-shaped
-	// reconciliation, then leave the object alone: no routes, no status.
+	// AGC-managed shapes (gatewayRefs or cross-namespace provider references) 
+	// are owned by ai-gateway-controller. Withdraw any HTTPRoute this controller 
+	// still owns from a previous legacy-shaped reconciliation, then leave the object alone.
 	if ctrlcommon.IsAGCManaged(model) {
 		if err := r.deleteOwnedHTTPRoute(ctx, model); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to withdraw HTTPRoute for AGC-managed ExternalModel %q: %w", model.Name, err)

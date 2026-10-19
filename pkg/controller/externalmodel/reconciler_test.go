@@ -242,8 +242,7 @@ func TestReconcile_ProviderNamespace(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, model))
 			var route gatewayapiv1.HTTPRoute
 			if scope == "foreign" {
-				// AGC-managed shape (RHOAIENG-99761): skipped entirely — no
-				// status, no route.
+				// AGC-managed shape skipped entirely
 				require.Never(t, func() bool {
 					m := &inferencev1alpha1.ExternalModel{}
 					if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
@@ -284,8 +283,7 @@ func TestReconcile_ProviderNamespaceUpdate(t *testing.T) {
 
 			var route gatewayapiv1.HTTPRoute
 			if change == "foreign reference" {
-				// AGC-managed edit (RHOAIENG-99761): IPP withdraws its route and
-				// stops writing status; the last-written status stays for AGC.
+				// IPP withdraws its route and stops writing status; the last-written status stays for AGC.
 				require.Eventually(t, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
 					return apierrors.IsNotFound(err)
@@ -314,8 +312,7 @@ func TestReconcile_AGCManagedGatewayRefs(t *testing.T) {
 	}
 	require.NoError(t, k8sClient.Create(ctx, model))
 
-	// AGC-managed shape (RHOAIENG-99761): skipped entirely — no status, no
-	// route on the default gateway.
+	// AGC-managed shape skipped entirely
 	require.Never(t, func() bool {
 		m := &inferencev1alpha1.ExternalModel{}
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
