@@ -23,6 +23,7 @@ import (
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	inferencev1alpha1 "github.com/opendatahub-io/ai-gateway-payload-processing/api/inference/v1alpha1"
@@ -43,7 +44,11 @@ func providerController() func(client.Client, *ctrlbuilder.Builder) error {
 			For(&inferencev1alpha1.ExternalProvider{}).
 			Named("external-provider-controller").
 			Watches(&inferencev1alpha1.ExternalModel{},
-				handler.EnqueueRequestsFromMapFunc(reconciler.MapModelToProviders)).
+				handler.EnqueueRequestsFromMapFunc(reconciler.MapModelToProviders),
+				// The status-suppression decision reads only model spec, so
+				// filter status-only updates (create, delete and spec changes
+				// still pass).
+				ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 			Complete(reconciler)
 	}
 }

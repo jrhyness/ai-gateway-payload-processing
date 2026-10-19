@@ -334,7 +334,12 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}, builder.WithPredicates(managedByPredicate)).
 		Watches(seObj, ownerHandler, builder.WithPredicates(managedByPredicate)).
 		Watches(drObj, ownerHandler, builder.WithPredicates(managedByPredicate)).
-		Watches(&inferencev1alpha1.ExternalModel{}, handler.EnqueueRequestsFromMapFunc(r.MapModelToProviders)).
+		Watches(&inferencev1alpha1.ExternalModel{},
+			handler.EnqueueRequestsFromMapFunc(r.MapModelToProviders),
+			// The status-suppression decision reads only model spec, so
+			// filter status-only updates (create, delete and spec changes
+			// still pass).
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("external-provider-reconciler").
 		Complete(r)
 }
