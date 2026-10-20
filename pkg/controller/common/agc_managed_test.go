@@ -68,17 +68,40 @@ func TestIsAGCManaged(t *testing.T) {
 			want:  true,
 		},
 		{
+			name:  "AGC shape with gatewayRefs alongside local references",
+			model: withGatewayRefs(model(providerRef(""), providerRef("models"))),
+			want:  true,
+		},
+		{
 			name:  "AGC shape with cross-namespace provider reference",
 			model: model(providerRef("shared")),
 			want:  true,
 		},
 		{
-			name: "AGC shape with cross-namespace reference among local references",
+			name:  "AGC shape with only cross-namespace provider references",
+			model: model(providerRef("shared"), providerRef("other")),
+			want:  true,
+		},
+		{
+			name: "mixed omitted-local and cross-namespace references keep IPP serving",
 			model: model(
 				providerRef(""),
 				providerRef("shared"),
 			),
-			want: true,
+			want: false,
+		},
+		{
+			name: "mixed explicit-local and cross-namespace references keep IPP serving",
+			model: model(
+				providerRef("models"),
+				providerRef("shared"),
+			),
+			want: false,
+		},
+		{
+			name:  "no references at all is not AGC-managed",
+			model: model(),
+			want:  false,
 		},
 	}
 

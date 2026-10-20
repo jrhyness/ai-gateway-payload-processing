@@ -25,8 +25,13 @@ This separation allows:
 This repo keeps a local type mirror, following
 [ADR D2](https://github.com/opendatahub-io/architecture-decision-records/pull/165).
 The [schema fixture](../api/inference/v1alpha1/testdata/README.md) describes how
-to synchronize it. IPP does not serve the new gateway attachments, and it rejects
-provider references to another namespace instead of resolving a local provider.
+to synchronize it. IPP does not serve the new gateway attachments, and it does
+not serve a model whose provider references are all cross-namespace: those
+shapes are managed by `ai-gateway-controller` and IPP skips them entirely (no
+routes, no data-plane mapping, no status writes). A model that references
+providers in both its own and another namespace keeps serving through its local
+references — the foreign reference is skipped until `ai-gateway-controller` can
+resolve it.
 
 ## ExternalProvider
 

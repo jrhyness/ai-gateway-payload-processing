@@ -59,11 +59,11 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// RHOAIENG-99761: AGC-managed shapes (gatewayRefs or cross-namespace
-	// provider references) are served by ai-gateway-controller. Stop serving
-	// any previously cached mapping (a legacy object edited to the new shape)
-	// and never add AGC-managed models to the store; a same-named AGC-managed
-	// model must not displace a tenant model's mapping.
+	// RHOAIENG-99761: AGC-managed shapes (gatewayRefs or a foreign-only
+	// provider reference set) are served by ai-gateway-controller. Stop
+	// serving any previously cached mapping (a legacy object edited to the
+	// new shape) and never add AGC-managed models to the store; a same-named
+	// AGC-managed model must not displace a tenant model's mapping.
 	if ctrlcommon.IsAGCManaged(model) {
 		r.store.deleteModel(req.NamespacedName)
 		logger.Info("AGC-managed ExternalModel excluded from store", "name", req.Name, "namespace", req.Namespace)
@@ -88,6 +88,10 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if len(resolved) == 0 {
+		// A mixed-shape model whose local references all fail resolution
+		// keeps its last-known-good mapping, exactly like a local-only
+		// model: the shape is servable, so this is a transient readiness
+		// failure rather than a handoff.
 		logger.Info("no ExternalProvider available for any ref, requeuing")
 		return ctrl.Result{RequeueAfter: providerRequeueDelay}, nil
 	}
@@ -98,9 +102,15 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // resolveRef resolves a single ExternalProviderRef to provider info.
-// AGC-managed models are excluded before this runs (RHOAIENG-99761), so every
-// ref resolves in the model namespace.
+// Cross-namespace references are never resolved by IPP: a foreign-only
+// reference set is AGC-managed and excluded before this runs
+// (RHOAIENG-99761), so this error can only surface for a mixed-shape model,
+// whose remaining local references are resolved independently of the
+// skipped foreign one.
 func (r *externalModelReconciler) resolveRef(namespace string, ref *inferencev1alpha1.ExternalProviderRef) (*resolvedProviderRef, error) {
+	if ref.Ref.Namespace != "" && ref.Ref.Namespace != namespace {
+		return nil, fmt.Errorf("cross-namespace ExternalProvider reference %q is not supported", ref.Ref.Namespace+"/"+ref.Ref.Name)
+	}
 	providerKey := types.NamespacedName{Namespace: namespace, Name: ref.Ref.Name}
 	providerInfo, found := r.store.getProvider(providerKey)
 	if !found {

@@ -141,6 +141,14 @@ func (r *Reconciler) reconcileHTTPRoute(ctx context.Context, logger logr.Logger,
 	var resolved []resolvedRef
 	var skipReasons []string
 	for _, ref := range model.Spec.ExternalProviderRefs {
+		if ref.Ref.Namespace != "" && ref.Ref.Namespace != model.Namespace {
+			// Cross-namespace references are never resolved by IPP. A
+			// foreign-only reference set is AGC-managed and skipped before
+			// this loop; here the model is mixed-shape and keeps serving
+			// through its local references.
+			skipReasons = append(skipReasons, fmt.Sprintf("cross-namespace ExternalProvider reference %q is not supported", ref.Ref.Namespace+"/"+ref.Ref.Name))
+			continue
+		}
 		provider := &inferencev1alpha1.ExternalProvider{}
 		providerKey := types.NamespacedName{Name: ref.Ref.Name, Namespace: model.Namespace}
 		if err := r.Get(ctx, providerKey, provider); err != nil {
@@ -176,6 +184,13 @@ func (r *Reconciler) reconcileHTTPRoute(ctx context.Context, logger logr.Logger,
 	}
 
 	if len(resolved) == 0 {
+		// A mixed-shape model whose local references all fail resolution
+		// keeps its last-known-good route, exactly like a local-only model:
+		// the shape is servable, so this is a transient readiness failure
+		// rather than a handoff. (Main withdrew the route whenever a
+		// foreign reference was present; that rationale only holds for
+		// unservable shapes, which are now AGC-managed and skipped before
+		// this loop.)
 		return fmt.Errorf("ExternalModel %q: no provider refs resolved successfully: %s", model.Name, strings.Join(skipReasons, "; "))
 	}
 
