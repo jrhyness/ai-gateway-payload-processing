@@ -59,11 +59,13 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// RHOAIENG-99761: AGC-managed shapes (gatewayRefs or a foreign-only
-	// provider reference set) are served by ai-gateway-controller. Stop
-	// serving any previously cached mapping (a legacy object edited to the
-	// new shape) and never add AGC-managed models to the store; a same-named
-	// AGC-managed model must not displace a tenant model's mapping.
+	// RHOAIENG-99761: AGC attachments (gatewayRefs) are served by
+	// ai-gateway-controller, and a foreign-only reference set is unservable
+	// by IPP (AGC skips cross-namespace refs too, RHOAIENG-90804). Either
+	// way IPP has nothing to serve: stop any previously cached mapping (a
+	// legacy object edited to either shape) and never add such models to
+	// the store; a same-named AGC-managed model must not displace a tenant
+	// model's mapping.
 	if ctrlcommon.IsAGCManaged(model) {
 		r.store.deleteModel(req.NamespacedName)
 		logger.Info("AGC-managed ExternalModel excluded from store", "name", req.Name, "namespace", req.Namespace)

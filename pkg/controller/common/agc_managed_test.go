@@ -25,27 +25,32 @@ import (
 	inferencev1alpha1 "github.com/opendatahub-io/ai-gateway-payload-processing/api/inference/v1alpha1"
 )
 
+func testProviderRef(namespace string) inferencev1alpha1.ExternalProviderRef {
+	return inferencev1alpha1.ExternalProviderRef{
+		Ref:         inferencev1alpha1.ExternalProviderReference{Name: "provider", Namespace: namespace},
+		TargetModel: "gpt-4o",
+		APIFormat:   "openai-chat",
+		Path:        "/v1/chat/completions",
+	}
+}
+
+func testModel(refs ...inferencev1alpha1.ExternalProviderRef) *inferencev1alpha1.ExternalModel {
+	return &inferencev1alpha1.ExternalModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "models"},
+		Spec:       inferencev1alpha1.ExternalModelSpec{ExternalProviderRefs: refs},
+	}
+}
+
+func withGatewayRefs(m *inferencev1alpha1.ExternalModel) *inferencev1alpha1.ExternalModel {
+	m.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "gateway", Namespace: "gateway-ns"},
+	}
+	return m
+}
+
 func TestIsAGCManaged(t *testing.T) {
-	providerRef := func(namespace string) inferencev1alpha1.ExternalProviderRef {
-		return inferencev1alpha1.ExternalProviderRef{
-			Ref:         inferencev1alpha1.ExternalProviderReference{Name: "provider", Namespace: namespace},
-			TargetModel: "gpt-4o",
-			APIFormat:   "openai-chat",
-			Path:        "/v1/chat/completions",
-		}
-	}
-	model := func(refs ...inferencev1alpha1.ExternalProviderRef) *inferencev1alpha1.ExternalModel {
-		return &inferencev1alpha1.ExternalModel{
-			ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "models"},
-			Spec:       inferencev1alpha1.ExternalModelSpec{ExternalProviderRefs: refs},
-		}
-	}
-	withGatewayRefs := func(m *inferencev1alpha1.ExternalModel) *inferencev1alpha1.ExternalModel {
-		m.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
-			{Name: "gateway", Namespace: "gateway-ns"},
-		}
-		return m
-	}
+	providerRef := testProviderRef
+	model := testModel
 
 	tests := []struct {
 		name  string
@@ -109,6 +114,52 @@ func TestIsAGCManaged(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, IsAGCManaged(tc.model))
+		})
+	}
+}
+
+func TestIsAGCAttached(t *testing.T) {
+	tests := []struct {
+		name  string
+		model *inferencev1alpha1.ExternalModel
+		want  bool
+	}{
+		{
+			name:  "gatewayRefs attachment",
+			model: withGatewayRefs(testModel(testProviderRef(""))),
+			want:  true,
+		},
+		{
+			name:  "gatewayRefs attachment alongside local references",
+			model: withGatewayRefs(testModel(testProviderRef(""), testProviderRef("models"))),
+			want:  true,
+		},
+		{
+			name:  "gatewayRefs attachment alongside foreign-only references",
+			model: withGatewayRefs(testModel(testProviderRef("shared"))),
+			want:  true,
+		},
+		{
+			name:  "local references without gatewayRefs",
+			model: testModel(testProviderRef("")),
+			want:  false,
+		},
+		{
+			name:  "foreign-only references without gatewayRefs are IPP-reported, not skipped",
+			model: testModel(testProviderRef("shared")),
+			want:  false,
+		},
+		{
+			name:  "no references and no gatewayRefs",
+			model: testModel(),
+			want:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsAGCAttached(tc.model))
 		})
 	}
 }

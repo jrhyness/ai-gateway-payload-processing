@@ -26,18 +26,22 @@ import (
 // nothing to serve in the model namespace.
 //
 // A gatewayRefs attachment is always AGC-managed: it explicitly selects AGC
-// tenant gateways, which AGC serves regardless of the model namespace. A
-// cross-namespace ExternalProvider reference is AGC-managed only when no
-// same-namespace reference remains: AGC does not resolve cross-namespace
-// providers yet (RHOAIENG-90804), so a model that also references a provider
-// in its own namespace keeps serving through IPP on that local reference —
-// the foreign reference is skipped, not handed off, so the edit cannot
-// silently remove service.
+// tenant gateways, which AGC serves regardless of the model namespace, and
+// AGC owns the model's status (see IsAGCAttached). A cross-namespace
+// ExternalProvider reference is AGC-managed only when no same-namespace
+// reference remains: AGC does not resolve cross-namespace providers yet
+// (RHOAIENG-90804) — it skips them, like IPP — so a mixed model keeps
+// serving through IPP on its local reference, and the edit cannot silently
+// remove service.
 //
-// IPP must not reconcile, serve, or write status for AGC-managed objects
-// (RHOAIENG-99761): AGC owns their routing and status exclusively. Without
-// this guard the legacy IPP controller would ignore the attachment, create a
-// route on the default gateway and overwrite AGC status.
+// AGC does not claim models by reference shape: in namespaces selecting IPP
+// it never writes model status (its cleanupUnselectedModel only removes its
+// own resources), so a foreign-only model there stays IPP's to report
+// (Failed, route withdrawn) even though IPP cannot serve it. This predicate
+// therefore does not decide model status ownership; it excludes unservable
+// shapes from the IPP data-plane store and suppresses IPP provider status
+// writes when only AGC-managed models reference a provider
+// (RHOAIENG-99761): AGC owns provider status in the namespaces it serves.
 func IsAGCManaged(model *inferencev1alpha1.ExternalModel) bool {
 	if len(model.Spec.GatewayRefs) > 0 {
 		return true
@@ -52,4 +56,12 @@ func IsAGCManaged(model *inferencev1alpha1.ExternalModel) bool {
 		}
 	}
 	return foreignRef && !localRef
+}
+
+// IsAGCAttached reports whether an ExternalModel explicitly attaches to AGC
+// tenant gateways via spec.gatewayRefs. AGC serves attachments regardless of
+// the model namespace and owns their status, so IPP must withdraw any route
+// it still owns and write no status for them (RHOAIENG-99761).
+func IsAGCAttached(model *inferencev1alpha1.ExternalModel) bool {
+	return len(model.Spec.GatewayRefs) > 0
 }

@@ -243,14 +243,15 @@ func TestReconcile_ProviderNamespace(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, model))
 			var route gatewayapiv1.HTTPRoute
 			if scope == "foreign" {
-				// AGC-managed shape skipped entirely
-				require.Never(t, func() bool {
-					m := &inferencev1alpha1.ExternalModel{}
-					if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
-						return false
-					}
-					return m.Status.Phase != ""
-				}, 2*time.Second, 100*time.Millisecond, "IPP must not write status for AGC-managed models")
+				// Foreign-only references are unservable by IPP, and AGC does
+				// not claim models by reference shape — in IPP namespaces it
+				// never writes model status — so IPP reports the failure.
+				waitForModelPhase(t, model.Name, ns, "Failed")
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+				cond := meta.FindStatusCondition(model.Status.Conditions, ctrlcommon.ConditionTypeReady)
+				require.NotNil(t, cond)
+				assert.Contains(t, cond.Message, "cross-namespace ExternalProvider reference")
+				assert.Empty(t, model.Status.HTTPRouteName)
 				assert.True(t, apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)))
 			} else {
 				waitForModelPhase(t, model.Name, ns, "Ready")
@@ -284,14 +285,21 @@ func TestReconcile_ProviderNamespaceUpdate(t *testing.T) {
 
 			var route gatewayapiv1.HTTPRoute
 			if change == "foreign reference" {
-				// IPP withdraws its route and stops writing status; the last-written status stays for AGC.
+				// The foreign-only edit is unservable: IPP withdraws its
+				// route and reports Failed. AGC does not claim models by
+				// reference shape (in IPP namespaces it never writes model
+				// status), so freezing the last-written Ready would leave
+				// the model claiming service it no longer has.
 				require.Eventually(t, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
 					return apierrors.IsNotFound(err)
-				}, 10*time.Second, 100*time.Millisecond, "AGC-managed edit must withdraw the IPP-owned route")
+				}, 10*time.Second, 100*time.Millisecond, "the foreign-only edit must withdraw the IPP-owned route")
+				waitForModelPhase(t, model.Name, ns, "Failed")
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
-				assert.Equal(t, "Ready", model.Status.Phase, "IPP must not rewrite status after the AGC-managed edit")
-				assert.Equal(t, model.Name, model.Status.HTTPRouteName)
+				cond := meta.FindStatusCondition(model.Status.Conditions, ctrlcommon.ConditionTypeReady)
+				require.NotNil(t, cond)
+				assert.Contains(t, cond.Message, "cross-namespace ExternalProvider reference")
+				assert.Empty(t, model.Status.HTTPRouteName)
 			} else {
 				waitForModelPhase(t, model.Name, ns, "Failed")
 				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
