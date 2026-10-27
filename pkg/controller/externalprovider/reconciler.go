@@ -250,6 +250,17 @@ func (r *Reconciler) reconcileResources(ctx context.Context, logger logr.Logger,
 	return nil
 }
 
+// transportDeletePreconditions constrains a transport delete to the object
+// observed by the preceding Get: if another controller replaces or relabels
+// the object in between, the API server rejects the delete (conflict) and
+// the next reconcile re-reads and re-checks the label instead of removing
+// an object IPP no longer owns.
+func transportDeletePreconditions(obj client.Object) *metav1.Preconditions {
+	uid := obj.GetUID()
+	rv := obj.GetResourceVersion()
+	return &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}
+}
+
 // cleanupTransport removes the Istio networking resources IPP created for
 // the provider. Objects IPP does not manage (no managed-by label) are left
 // alone, so a same-named object owned by another controller is never
@@ -262,7 +273,7 @@ func (r *Reconciler) cleanupTransport(ctx context.Context, logger logr.Logger, p
 	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, svc); err == nil {
 		if svc.Labels[ctrlcommon.LabelManagedBy] == managedByValue {
 			logger.Info("Removing IPP transport for provider claimed by AIGC", "service", name, "namespace", ns)
-			if err := r.Delete(ctx, svc); err != nil && !apierrors.IsNotFound(err) {
+			if err := r.Delete(ctx, svc, &client.DeleteOptions{Preconditions: transportDeletePreconditions(svc)}); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete Service %s/%s: %w", ns, name, err)
 			}
 		}
@@ -276,7 +287,7 @@ func (r *Reconciler) cleanupTransport(ctx context.Context, logger logr.Logger, p
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, obj); err == nil {
 			if obj.GetLabels()[ctrlcommon.LabelManagedBy] == managedByValue {
 				logger.Info("Removing IPP transport for provider claimed by AIGC", "kind", gvk.Kind, "name", name, "namespace", ns)
-				if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+				if err := r.Delete(ctx, obj, &client.DeleteOptions{Preconditions: transportDeletePreconditions(obj)}); err != nil && !apierrors.IsNotFound(err) {
 					return fmt.Errorf("failed to delete %s %s/%s: %w", gvk.Kind, ns, name, err)
 				}
 			}
